@@ -27,7 +27,7 @@ fun WelcomeScreen(
     onSignUp: () -> Unit,
     onLogin: () -> Unit
 ) {
-    Scaffold { innerPadding ->
+    Scaffold(containerColor = MaterialTheme.colorScheme.background) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()

@@ -31,6 +31,24 @@ service cloud.firestore {
       return isSignedIn() && myCollegeId() == collegeId;
     }
 
+    function isBoardModerator(boardId) {
+      return isSignedIn()
+        && request.auth.uid in get(/databases/$(database)/documents/boards/$(boardId)).data.moderatorIds;
+    }
+
+    // A vote update may only add or remove the caller's own UID. The score is
+    // always derived from the two lists, so it cannot drift away from them:
+    // +1 for a new upvote, -1 for removing it, and -2/+2 when switching sides.
+    function validVote(before, after) {
+      return after.score is int
+        && after.upvotedBy is list
+        && after.downvotedBy is list
+        && after.score == after.upvotedBy.size() - after.downvotedBy.size()
+        && before.upvotedBy.removeAll([request.auth.uid]) == after.upvotedBy.removeAll([request.auth.uid])
+        && before.downvotedBy.removeAll([request.auth.uid]) == after.downvotedBy.removeAll([request.auth.uid])
+        && !(request.auth.uid in after.upvotedBy && request.auth.uid in after.downvotedBy);
+    }
+
     // The email domain is the only server-checkable link between an account and a
     // college. Checking it on profile creation stops a verified account from
     // claiming a college whose students it is not part of.
@@ -145,6 +163,297 @@ service cloud.firestore {
       allow delete: if isSignedIn() && resource.data.followerId == myUid();
 
       allow update: if false;
+    }
+
+    // Message boards. The owner creates one document per board in the Firebase
+    // console; students only read the boards for their own college.
+    match /boards/{boardId} {
+      allow read: if isSignedIn() && isSameCollege(resource.data.collegeId);
+      allow write: if false;
+
+      match /threads/{threadId} {
+        allow read: if isSignedIn() && isSameCollege(resource.data.collegeId);
+
+        allow create: if isSignedIn()
+          && request.resource.data.boardId == boardId
+          && request.resource.data.collegeId == myCollegeId()
+          && get(/databases/$(database)/documents/boards/$(boardId)).data.collegeId == myCollegeId()
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.title is string
+          && request.resource.data.title.size() > 0
+          && request.resource.data.title.size() <= 120
+          && request.resource.data.body is string
+          && request.resource.data.body.size() <= 2000
+          && request.resource.data.score == 0
+          && request.resource.data.upvotedBy == []
+          && request.resource.data.downvotedBy == []
+          && request.resource.data.commentCount == 0
+          && request.resource.data.pinned == false
+          && request.resource.data.isAnonymous is bool
+          && request.resource.data.reportCount == 0
+          // Normal threads keep the exact author identity. Anonymous threads
+          // must not contain authorId or authorName at all; only the private
+          // ghostIdentities document knows who wrote them.
+          && (
+            (request.resource.data.isAnonymous == false
+              && request.resource.data.authorId == myUid()
+              && request.resource.data.authorName == myProfile().name)
+            || (request.resource.data.isAnonymous == true
+              && !('authorId' in request.resource.data)
+              && !('authorName' in request.resource.data)
+              && request.resource.data.anonAlias is string
+              && request.resource.data.anonAlias.size() >= 3
+              && request.resource.data.anonAlias.size() <= 40)
+          );
+
+        // Only four kinds of edits exist: a student's own vote, the +1/-1
+        // comment counter written with a comment, a moderator's pin toggle, and
+        // the ghost report count (increment by a reporter, reset by a moderator).
+        allow update: if isSignedIn() && isSameCollege(resource.data.collegeId) && (
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'upvotedBy',
+            'downvotedBy',
+            'score'
+          ]) && validVote(resource.data, request.resource.data))
+          ||
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['commentCount'])
+            && (
+              request.resource.data.commentCount == resource.data.commentCount + 1
+              || (resource.data.commentCount > 0
+                && request.resource.data.commentCount == resource.data.commentCount - 1)
+            ))
+          ||
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pinned'])
+            && request.resource.data.pinned is bool
+            && isBoardModerator(boardId))
+          ||
+          // A ghost report increments the counter by exactly one. Rules cannot
+          // see the matching ghostReports write in the same batch, so the client
+          // pair (report + increment) is the enforcement boundary here.
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reportCount'])
+            && resource.data.get('isAnonymous', false) == true
+            && request.resource.data.reportCount == resource.data.reportCount + 1)
+          ||
+          // Restore clears the counter so a moderator can bring the item back.
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reportCount'])
+            && resource.data.get('isAnonymous', false) == true
+            && request.resource.data.reportCount == 0
+            && isBoardModerator(boardId))
+        );
+
+        // Anonymous items have no authorId; ownership is proven by the private
+        // identity document, which the author cannot read but rules can.
+        allow delete: if isSignedIn() && (
+          isBoardModerator(boardId)
+          || (resource.data.get('isAnonymous', false) == false
+            && isOwner(resource.data.authorId))
+          || (resource.data.get('isAnonymous', false) == true
+            && get(/databases/$(database)/documents/ghostIdentities/$(threadId)).data.uid == myUid())
+        );
+
+        match /comments/{commentId} {
+          function parentThread() {
+            return get(/databases/$(database)/documents/boards/$(boardId)/threads/$(threadId)).data;
+          }
+
+          function parentComment() {
+            return get(/databases/$(database)/documents/boards/$(boardId)/threads/$(threadId)/comments/$(request.resource.data.parentId)).data;
+          }
+
+          allow read: if isSignedIn() && isSameCollege(parentThread().collegeId);
+
+          allow create: if isSignedIn()
+            && isSameCollege(parentThread().collegeId)
+            && request.resource.data.createdAt == request.time
+            && request.resource.data.body is string
+            && request.resource.data.body.size() > 0
+            && request.resource.data.body.size() <= 500
+            && request.resource.data.depth is int
+            && request.resource.data.depth >= 0
+            && request.resource.data.depth <= 3
+            && request.resource.data.score == 0
+            && request.resource.data.upvotedBy == []
+            && request.resource.data.downvotedBy == []
+            && request.resource.data.isAnonymous is bool
+            && request.resource.data.reportCount == 0
+            // Same rule as threads: normal comments carry the author, anonymous
+            // comments carry only the alias and a private identity document.
+            && (
+              (request.resource.data.isAnonymous == false
+                && request.resource.data.authorId == myUid()
+                && request.resource.data.authorName == myProfile().name)
+              || (request.resource.data.isAnonymous == true
+                && !('authorId' in request.resource.data)
+                && !('authorName' in request.resource.data)
+                && request.resource.data.anonAlias is string
+                && request.resource.data.anonAlias.size() >= 3
+                && request.resource.data.anonAlias.size() <= 40)
+            )
+            // A top-level comment has no parent; a reply must point at a comment
+            // exactly one level shallower, so depth cannot be faked.
+            && (
+              (request.resource.data.parentId == null
+                && request.resource.data.depth == 0)
+              || (request.resource.data.parentId is string
+                && exists(/databases/$(database)/documents/boards/$(boardId)/threads/$(threadId)/comments/$(request.resource.data.parentId))
+                && parentComment().depth == request.resource.data.depth - 1)
+            );
+
+          allow update: if isSignedIn()
+            && isSameCollege(parentThread().collegeId)
+            && (
+              (request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'upvotedBy',
+                'downvotedBy',
+                'score'
+              ]) && validVote(resource.data, request.resource.data))
+              ||
+              (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reportCount'])
+                && resource.data.get('isAnonymous', false) == true
+                && request.resource.data.reportCount == resource.data.reportCount + 1)
+              ||
+              (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reportCount'])
+                && resource.data.get('isAnonymous', false) == true
+                && request.resource.data.reportCount == 0
+                && isBoardModerator(boardId))
+            );
+
+          allow delete: if isSignedIn() && (
+            isBoardModerator(boardId)
+            || (resource.data.get('isAnonymous', false) == false
+              && isOwner(resource.data.authorId))
+            || (resource.data.get('isAnonymous', false) == true
+              && get(/databases/$(database)/documents/ghostIdentities/$(commentId)).data.uid == myUid())
+          );
+        }
+
+        // One report document per reporter per thread item. Its ID is the
+        // reporter's UID, so a second report by the same student cannot exist.
+        match /ghostReports/{reporterUid} {
+          function parentThread() {
+            return get(/databases/$(database)/documents/boards/$(boardId)/threads/$(threadId)).data;
+          }
+
+          allow create: if isSignedIn()
+            && isSameCollege(parentThread().collegeId)
+            && reporterUid == myUid()
+            && request.resource.data.reporterId == myUid()
+            && request.resource.data.itemId is string
+            && request.resource.data.itemType in ['thread', 'comment']
+            && request.resource.data.reason in [
+              'spam',
+              'harassment',
+              'hate_speech',
+              'misinformation',
+              'other'
+            ]
+            && request.resource.data.details is string
+            && request.resource.data.details.size() <= 500
+            && request.resource.data.createdAt == request.time
+            && (
+              (request.resource.data.itemType == 'thread'
+                && request.resource.data.itemId == threadId
+                && parentThread().get('isAnonymous', false) == true)
+              || (request.resource.data.itemType == 'comment'
+                && exists(/databases/$(database)/documents/boards/$(boardId)/threads/$(threadId)/comments/$(request.resource.data.itemId))
+                && get(/databases/$(database)/documents/boards/$(boardId)/threads/$(threadId)/comments/$(request.resource.data.itemId)).data.get('isAnonymous', false) == true)
+            );
+
+          allow read, update, delete: if false;
+        }
+      }
+    }
+
+    // Private identity of an anonymous thread or comment. Only this document
+    // links the public, authorless item to a real UID. Board moderators can read
+    // it; the author cannot (they may only delete it with their own item).
+    match /ghostIdentities/{itemId} {
+      allow read: if isSignedIn() && isBoardModerator(resource.data.boardId);
+
+      allow create: if isSignedIn()
+        && request.resource.data.uid == myUid()
+        && request.resource.data.collegeId == myCollegeId()
+        && request.resource.data.boardId is string
+        && get(/databases/$(database)/documents/boards/$(request.resource.data.boardId)).data.collegeId == myCollegeId()
+        && request.resource.data.threadId is string
+        && request.resource.data.type in ['thread', 'comment']
+        && request.resource.data.createdAt == request.time
+        // For a thread the identity names itself; for a comment it names the
+        // parent thread. The public document is in the same batch, which rules
+        // cannot see, so this is the strongest check available without a server.
+        && (request.resource.data.type == 'comment'
+          || request.resource.data.threadId == itemId);
+
+      // A normal item's delete batch also removes this document. It does not
+      // exist for normal items, so allow the no-op delete.
+      allow delete: if isSignedIn()
+        && (resource == null
+          || resource.data.uid == myUid()
+          || isBoardModerator(resource.data.boardId));
+
+      allow update: if false;
+    }
+
+    // A student's alias inside one thread. The owner can read and create only
+    // their own alias; it is never edited, so the alias stays consistent.
+    match /ghostAliases/{aliasId} {
+      allow read: if isSignedIn()
+        && (resource == null || resource.data.uid == myUid());
+
+      allow create: if isSignedIn()
+        && request.resource.data.uid == myUid()
+        && request.resource.data.threadId is string
+        && aliasId == request.resource.data.threadId + '_' + myUid()
+        && request.resource.data.alias is string
+        && request.resource.data.alias.size() >= 3
+        && request.resource.data.alias.size() <= 40
+        && request.resource.data.createdAt == request.time;
+
+      allow update, delete: if false;
+    }
+
+    // Daily anonymous allowance. The document ID is {uid}_{yyyyMMdd}; a client
+    // batch increments it with the anonymous write. Rules cap the counter at 5
+    // and only allow +1, but rules cannot prove the public write happened.
+    match /ghostLimits/{limitId} {
+      allow read: if isSignedIn()
+        && (resource == null || resource.data.uid == myUid());
+
+      allow create: if isSignedIn()
+        && request.resource.data.uid == myUid()
+        && limitId == myUid() + '_' + request.resource.data.date
+        && request.resource.data.date is string
+        && request.resource.data.date.size() == 8
+        && request.resource.data.count == 1
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isSignedIn()
+        && resource.data.uid == myUid()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['count', 'updatedAt'])
+        && request.resource.data.count == resource.data.count + 1
+        && request.resource.data.count <= 5
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if false;
+    }
+
+    // Moderation audit trail. A reveal must write one of these first; only
+    // moderators of that board can create or read them, and they are immutable.
+    match /revealLogs/{logId} {
+      allow read: if isSignedIn() && isBoardModerator(resource.data.boardId);
+
+      allow create: if isSignedIn()
+        && request.resource.data.moderatorUid == myUid()
+        && request.resource.data.boardId is string
+        && isBoardModerator(request.resource.data.boardId)
+        && request.resource.data.itemId is string
+        && exists(/databases/$(database)/documents/ghostIdentities/$(request.resource.data.itemId))
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() > 0
+        && request.resource.data.reason.size() <= 500
+        && request.resource.data.createdAt == request.time;
+
+      allow update, delete: if false;
     }
 
     // Feed posts. The college feed is a bounded query on collegeId + createdAt,
@@ -292,7 +601,14 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && request.resource.data.reporterId == request.auth.uid
         && request.resource.data.reportedUserId is string
-        && request.resource.data.targetType in ['post', 'comment', 'story', 'user']
+        && request.resource.data.targetType in [
+          'post',
+          'comment',
+          'story',
+          'user',
+          'thread',
+          'board_comment'
+        ]
         && request.resource.data.targetId is string
         && request.resource.data.reason in [
           'spam',

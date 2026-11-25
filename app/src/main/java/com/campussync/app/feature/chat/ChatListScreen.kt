@@ -165,7 +165,7 @@ fun ChatListScreen(
                             )
                             HorizontalDivider(
                                 modifier = Modifier.padding(start = 74.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant
+                                color = MaterialTheme.colorScheme.outlineVariant
                             )
                         }
                     }

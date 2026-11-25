@@ -5,7 +5,9 @@ enum class ReportTarget(val wireValue: String) {
     Post("post"),
     Comment("comment"),
     Story("story"),
-    User("user")
+    User("user"),
+    Thread("thread"),
+    BoardComment("board_comment")
 }
 
 /** The reasons offered in the report dialog. */

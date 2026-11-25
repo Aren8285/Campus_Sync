@@ -3,6 +3,24 @@
 Do these steps once in the Firebase console. The project already contains
 `app/google-services.json`, so no Firebase SDK configuration is needed in code.
 
+## Pending Firebase steps (Ghost Mode)
+
+The Ghost Mode feature is built into the app, but the Firebase project still needs
+these owner actions:
+
+- [ ] **Republish `firestore.rules`** (step 6). The new rules add
+  `ghostIdentities`, `ghostAliases`, `ghostLimits`, `ghostReports`, and
+  `revealLogs` blocks.
+- [ ] **Create the `revealLogs` composite index** (step 7): `boardId` ascending,
+  `createdAt` descending.
+- [ ] **Do not create the new collections by hand.** The app creates
+  `ghostIdentities`, `ghostAliases`, `ghostLimits`, `ghostReports`, and
+  `revealLogs` automatically when they are first needed. They appear in the
+  console after the first anonymous post, report, or reveal.
+- [ ] **Keep at least one board moderator** in `moderatorIds` (step 4). Without a
+  moderator, nobody can read ghost identities, restore hidden items, or use
+  **Reveal author**.
+
 ## 1. Turn on email/password sign-in
 
 1. Open **Firebase Console → Authentication**.
@@ -66,7 +84,42 @@ student's email does not match.
 Do **not** create `users` or `usernames` documents by hand. The app creates them
 during onboarding and when usernames change.
 
-## 4. Expire stories without Cloud Functions
+## 4. Create message boards
+
+Boards are console data; the app cannot create them. Every board belongs to one
+college.
+
+1. Open **Firestore Database → Data**.
+2. Click **Start collection** and use the collection ID `boards`.
+3. Use a short lowercase document ID such as `general`.
+4. Add these fields:
+
+| Field | Type | Example value |
+|---|---|---|
+| `collegeId` | string | `demo-university` (must match the `/colleges` document ID exactly) |
+| `name` | string | `General` |
+| `description` | string | `Anything campus-related.` |
+| `moderatorIds` | array | your UID, or `[]` when nobody should moderate |
+| `createdAt` | timestamp | the current date and time |
+
+5. Add one document per board. A useful starter set:
+
+| Document ID | `name` |
+|---|---|
+| `general` | `General` |
+| `hostel` | `Hostel` |
+| `placements` | `Placements` |
+| `memes` | `Memes` |
+
+6. To make someone a moderator, open **Authentication → Users**, copy their UID,
+   and add it to `moderatorIds`. Moderators can pin any thread, delete any thread
+   or comment, restore hidden anonymous items, and reveal anonymous authors on
+   that board. Leave the array empty if nobody should.
+
+Students see only boards whose `collegeId` matches their profile. Do **not** create
+threads or comments in the console; the app writes those.
+
+## 5. Expire stories without Cloud Functions
 
 Stories last 24 hours. The Spark plan does not include Cloud Functions, so the
 project uses Firestore's built-in TTL (time-to-live) policy instead of a
@@ -91,15 +144,25 @@ Add one more policy for queued push jobs so an undrained queue cannot grow:
 3. Timestamp field: `expireAt`.
 4. Create the policy.
 
-The push relay from step 7 deletes the jobs it delivers; this policy removes the
+The push relay from step 8 deletes the jobs it delivers; this policy removes the
 ones it never got to.
 
-## 5. Publish the security rules
+## 6. Publish the security rules
 
 1. Open **Firestore Database → Rules**.
 2. Replace the editor contents with the contents of the project's
    `firestore.rules` file.
 3. Click **Publish**.
+
+The board rules are included: students read boards for their college, write
+threads and comments, vote only on their own behalf, and moderators alone can
+pin. Boards themselves remain console-only.
+
+Ghost Mode rules are included too. Anonymous threads and comments are stored
+without `authorId` or `authorName`; the real UID is in a private
+`ghostIdentities` document that only board moderators can read. The daily limit
+counter can only go up by one and never above five, and reveal actions must
+write a `revealLogs` audit record with a reason before the identity is read.
 
 Colleges are readable by everyone on purpose: the sign-up screen has to show the
 college list before the student has an account. Nobody can write colleges from
@@ -110,11 +173,11 @@ that has not opened the verification link cannot read or write profiles, posts, 
 chats even if a modified client skips the verification screen. See
 [`docs/SECURITY.md`](SECURITY.md) for the full model.
 
-## 6. Create the composite indexes
+## 7. Create the composite indexes
 
-The feed, story, and chat queries need four composite indexes. You can either let
-the app create them on first use (Firebase logs a link in Logcat) or create them
-now.
+The feed, story, chat, and board queries need eight composite indexes. You can
+either let the app create them on first use (Firebase logs a link in Logcat) or
+create them now.
 
 From the project root, with the Firebase CLI installed and logged in:
 
@@ -130,11 +193,15 @@ Or create them by hand in **Firestore Database → Indexes → Composite**:
 | `stories` | `collegeId` ascending, `createdAt` descending |
 | `stories` | `collegeId` ascending, `authorId` ascending, `createdAt` ascending |
 | `chats` | `members` array-contains, `lastMessageAt` descending |
+| `boards` | `collegeId` ascending, `name` ascending |
+| `threads` | `collegeId` ascending, `pinned` descending, `createdAt` descending |
+| `threads` | `collegeId` ascending, `score` descending, `createdAt` descending |
+| `revealLogs` | `boardId` ascending, `createdAt` descending |
 
 Index builds take a few minutes. Until they finish, the feed, story bar, or chat
 inbox shows an error with a retry action and Logcat prints the console link.
 
-## 7. Message notifications without Cloud Functions
+## 8. Message notifications without Cloud Functions
 
 Chat messages arrive in real time from Firestore without notifications. Push is
 optional: the Spark plan cannot run Cloud Functions, and no Android app can send
@@ -149,7 +216,7 @@ The project works around that with a small queue and a relay you own:
 
 The client cannot read `/pushQueue`; only the relay can, with credentials that
 never enter the app or this repository. Setup, cost, and limits are in
-[`docs/PUSH.md`](PUSH.md): enable the TTL policy from step 4, create a service
+[`docs/PUSH.md`](PUSH.md): enable the TTL policy from step 5, create a service
 account, store its JSON as the `FIREBASE_SERVICE_ACCOUNT` secret, and enable
 `.github/workflows/push-relay.yml`. The service account needs **Cloud Datastore
 User** and **Firebase Cloud Messaging API Admin**; neither the app nor this
@@ -168,7 +235,7 @@ could not skip muted chats.
 Firebase 25.1 deprecated registration tokens in favour of Firebase Installation
 IDs; tokens still work and are accepted by both the relay and the console.
 
-## 8. Test the flow
+## 9. Test the flow
 
 1. Run the app.
 2. Tap **Create account**.
@@ -196,6 +263,31 @@ IDs; tokens still work and are accepted by both the relay and the console.
 16. Share an image by pasting a public `https://` link in the chat composer.
 17. Optional: deploy the relay from `docs/PUSH.md`, then send a message from the
     second account and check that the notification arrives and opens the chat.
+18. Tap the **boards** icon in the Home header. Open a board you created.
+19. Tap **New thread**, add a title and body, and post it. The new thread opens.
+20. Upvote and downvote the thread and a comment. The score moves by one, and
+    pressing the same arrow again removes your vote. Switch from up to down on
+    one item and check that the score moves by two.
+21. Reply to a comment, then reply to that reply (up to three levels). Delete your
+    own thread. From a moderator account, pin another thread and check it stays
+    first under **New**; try pinning from a normal account and confirm the pin
+    action is not available.
+22. Report a thread or comment and block its author. The content disappears from
+    the board for that account.
+23. Tap **New thread**, turn on **Post anonymously**, and post. The thread shows a
+    random alias with a ghost icon and **OP**, and tapping the alias does not open
+    a profile. Reload and check the alias stays the same.
+24. Add an anonymous comment in the same thread; it reuses the same alias. From a
+    second account, add another anonymous comment and confirm it has a different
+    alias.
+25. From three different accounts, report the anonymous thread. Normal accounts
+    lose it; a moderator sees **Hidden pending review** with **Restore** and
+    **Delete**. Restore it and confirm it returns for normal accounts.
+26. As a moderator, tap **Reveal author** on an anonymous item, type a reason, and
+    confirm the name and username appear. Check that a `revealLogs` document was
+    written in the console.
+27. Make six anonymous posts or comments in one UTC day. The sixth is blocked with
+    the daily-limit message.
 
 ## Troubleshooting
 
@@ -208,16 +300,29 @@ IDs; tokens still work and are accepted by both the relay and the console.
   student's `/users/{uid}` document must exist before viewing the feed or other
   profiles. A profile also requires the email domain to match the chosen college.
 - **Feed fails with "The query requires an index"** — create the composite
-  indexes from step 6, or open the link in the error. This is expected on a new
+  indexes from step 7, or open the link in the error. This is expected on a new
   project.
 - **Images do not load** — the app stores image links, not uploads. Use a public
   `https://` link that returns an image file.
 - **A story stays visible after 24 hours** — check that the TTL policy from
-  step 4 exists on `stories.expiresAt`, and that the device clock is correct.
+  step 5 exists on `stories.expiresAt`, and that the device clock is correct.
 - **Reports** — the app cannot read `/reports`. Open the collection in the
   Firebase console to review them.
 - **Chat inbox fails with "The query requires an index"** — create the `chats`
-  index from step 6. Firestore needs it for `members` + `lastMessageAt`.
+  index from step 7. Firestore needs it for `members` + `lastMessageAt`.
+- **Boards are empty, or threads fail with "The query requires an index"** — add
+  board documents whose `collegeId` matches the student's college (step 4) and
+  create the three board indexes from step 7. A student sees only boards for
+  their own college, so a mismatched `collegeId` looks like an empty list.
+- **Anonymous posting says the daily limit is reached** — the limit is five
+  anonymous threads and comments per UTC day. Wait for the next UTC day, or use a
+  non-anonymous post.
+- **Reveal author fails** — the account must be in that board's `moderatorIds`,
+  and the item must still have its private `ghostIdentities` document. Publish
+  the latest rules and check the board document.
+- **A reported anonymous item disappeared** — that is expected once three
+  students report it. A board moderator can open it from the board list, choose
+  **Restore**, or delete it.
 - **No push notification** — the relay is not deployed or not running, or the
   queue TTL removed the job. Check the relay log and `/pushQueue` in the console;
   realtime messages still work. Also check the notification permission, that the

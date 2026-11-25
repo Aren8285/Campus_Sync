@@ -35,7 +35,7 @@ fun LoginScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-    Scaffold { innerPadding ->
+    Scaffold(containerColor = MaterialTheme.colorScheme.background) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()

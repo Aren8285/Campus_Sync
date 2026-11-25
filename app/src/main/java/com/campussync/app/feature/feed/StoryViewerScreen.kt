@@ -120,7 +120,7 @@ private fun StoryViewer(
                     Text(
                         text = current.text,
                         style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        color = MaterialTheme.colorScheme.onSurface,
                         textAlign = TextAlign.Center,
                         modifier = Modifier
                             .align(Alignment.BottomCenter)

@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Chat
+import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -53,6 +54,7 @@ fun FeedScreen(
     onAddStory: () -> Unit,
     onOpenStories: (String) -> Unit,
     onOpenChats: () -> Unit,
+    onOpenBoards: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: FeedViewModel = hiltViewModel()
 ) {
@@ -94,6 +96,13 @@ fun FeedScreen(
             ScreenHeader(
                 title = "Campus feed",
                 actions = {
+                    IconButton(onClick = onOpenBoards) {
+                        Icon(
+                            imageVector = Icons.Outlined.Forum,
+                            contentDescription = "Message boards"
+                        )
+                    }
+
                     IconButton(onClick = onOpenChats) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Outlined.Chat,

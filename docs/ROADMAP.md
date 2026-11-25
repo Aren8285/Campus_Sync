@@ -93,11 +93,32 @@ ticked and add new work here instead of leaving TODOs in code.
 - [ ] Remove the device token from the previous account on logout, for shared
       devices (follow-up; the receive side already checks membership)
 
-## Iteration 7 — Boards and Collab
+## Iteration 7 — Message boards and Collab
 
-- [ ] Course/community boards with threads
+- [x] College-scoped board list, reachable from the Home header
+- [x] Thread list with New/Top sorting, pinned first, 10 per page and "Load more"
+- [x] Create-thread composer with title and body limits
+- [x] Thread detail with up/down votes, nested comments (max depth 3), and replies
+- [x] Delete own thread/comment, moderator deletes, and moderator pinning
+- [x] Report threads/comments and hide blocked students' threads/comments
+- [x] Transactional one-vote-per-student scoring enforced by rules
+- [x] Rules and indexes for `/boards`, `threads`, and board `comments`
+- [x] Ghost Mode: anonymous threads and comments with a random alias
+- [x] One alias per student per thread, ghost icon, and **OP** on the thread author
+- [x] Private `/ghostIdentities/{itemId}` readable only by board moderators;
+      authors delete through the identity, moderators delete anything
+- [x] Five anonymous posts/comments per UTC day via `/ghostLimits` batch counters
+- [x] `/ghostReports` plus `reportCount`; three reports hide an item with a
+      moderator **Hidden pending review** label, **Restore**, and **Delete**
+- [x] Moderator **Reveal author** with a required reason and `/revealLogs` audit
+- [x] Rules for ghost identities, aliases, limits, reports, and reveal logs; index
+      for `revealLogs`
+- [ ] Server-enforced Ghost Mode audit and rate limits (rules and batches cannot
+      prove same-batch pairing; see `docs/DATA_MODEL.md` limitations)
+- [ ] Rules- or query-level hiding of reported ghost items (today filtering is on
+      the client so list queries keep working)
 - [ ] Study partner and project collaboration posts
-- [ ] Rules and indexes for board and collab collections
+- [ ] Rules and indexes for the collab collection
 
 ## Iteration 8 — Safety, alumni, and settings
 
@@ -126,8 +147,8 @@ ticked and add new work here instead of leaving TODOs in code.
 
 ## Later / blocked
 
-- [ ] Avatar images. The app shows initials for now because the project does not
-      use Firebase Storage. Revisit when an approved image host or Storage plan exists.
+- [ ] Profile photos in feed, comment, chat, and board rows. The profile screens
+      use `avatarUrl`; rows would need denormalized avatar links.
 - [ ] Image uploads for posts and stories. Until then they accept public image
       links, which the product constraints allow.
 - [ ] Scheduled cleanup for old data. Stories already use a Firestore TTL policy;

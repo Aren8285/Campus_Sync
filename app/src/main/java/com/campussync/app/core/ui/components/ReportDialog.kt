@@ -26,7 +26,8 @@ import androidx.compose.ui.unit.dp
 import com.campussync.app.data.model.ReportReason
 
 /**
- * Shared reason picker used for post, comment, story, and profile reports.
+ * Shared reason picker used for post, comment, story, profile, thread, and board
+ * comment reports.
  */
 @Composable
 fun ReportDialog(

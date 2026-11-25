@@ -1,6 +1,7 @@
 # Campus Sync — Data model
 
-This document describes the Firestore collections used by Iterations 1, 2, and 6.
+This document describes the Firestore collections used by Iterations 1, 2, 6, and 7
+(message boards, including Ghost Mode).
 
 ## `/colleges/{collegeId}`
 
@@ -179,6 +180,200 @@ Read rules intentionally do not compare `expiresAt` with `request.time`: list
 rules cannot be filtered by time, and doing so would make the whole story query
 fail. Expiry is therefore enforced by the two mechanisms above.
 
+## `/boards/{boardId}`
+
+A message board for one college. Boards are created by the owner in the Firebase
+console (see `docs/SETUP.md`); the app only reads them.
+
+| Field | Type | Notes |
+|---|---|---|
+| `collegeId` | string | Must match the document ID in `/colleges`. Only that college can read the board. |
+| `name` | string | Shown in the board list, sorted alphabetically. |
+| `description` | string | Optional one-line explanation. |
+| `moderatorIds` | array of strings | UIDs allowed to pin, delete, restore hidden anonymous items, and reveal anonymous authors on this board. May be empty. |
+| `createdAt` | timestamp | When the board was added in the console. |
+
+Suggested starter boards: `General`, `Hostel`, `Placements`, `Memes`.
+
+Example:
+
+```text
+boards/general
+  collegeId: "demo-university"
+  name: "General"
+  description: "Anything campus-related."
+  moderatorIds: ["<auth-uid>"]
+  createdAt: <timestamp>
+```
+
+Reads are limited to students in `collegeId`. Nobody can write boards from the
+app; the console bypasses rules, which is how the owner manages them.
+
+## `/boards/{boardId}/threads/{threadId}`
+
+A discussion thread. The board query orders pinned threads first, then by
+`createdAt` (New) or `score` (Top), 10 per page.
+
+| Field | Type | Notes |
+|---|---|---|
+| `boardId` | string | Must equal the board document ID in the path. |
+| `collegeId` | string | Author's college; the read rule is scoped to it. |
+| `authorId` | string | Firebase Auth UID. Present only on normal threads; anonymous threads must omit it. |
+| `authorName` | string | Copied from the author's profile. Present only on normal threads. |
+| `title` | string | 1–120 characters. |
+| `body` | string | Up to 2000 characters. |
+| `score` | number | Always `upvotedBy.size() - downvotedBy.size()`. |
+| `upvotedBy` | array of strings | UIDs that upvoted. |
+| `downvotedBy` | array of strings | UIDs that downvoted. |
+| `commentCount` | number | Incremented by one in the comment batch. |
+| `createdAt` | timestamp | Server timestamp. |
+| `pinned` | boolean | Starts `false`; only a board moderator can change it. |
+| `isAnonymous` | boolean | `true` for a Ghost Mode thread, `false` for a normal one. |
+| `anonAlias` | string | The alias shown instead of a name. Only present when anonymous. |
+| `reportCount` | number | Anonymous reports on this thread. At 3 the app hides it from normal users. |
+
+Normal threads require `authorId` to equal the caller and `authorName` to match
+their profile. Anonymous threads must not contain either field at all; rules
+reject them. The real author is stored separately in
+`/ghostIdentities/{threadId}` (see below).
+
+A student has at most one vote: they can appear in `upvotedBy` or
+`downvotedBy`, never both. Voting runs in a transaction that rewrites both lists
+and recomputes `score`. Rules require the score to equal the list difference and
+only allow the caller's own UID to be added or removed, so a modified client
+cannot change another student's vote or fake the score.
+
+## `/boards/{boardId}/threads/{threadId}/comments/{commentId}`
+
+A nested reply. Depth 0 is a top-level comment; replies go up to depth 3.
+
+| Field | Type | Notes |
+|---|---|---|
+| `authorId` | string | Firebase Auth UID. Present only on normal comments; anonymous comments must omit it. |
+| `authorName` | string | Copied from the author's profile. Present only on normal comments. |
+| `body` | string | 1–500 characters. |
+| `parentId` | string or null | `null` for a top-level comment, otherwise the parent comment ID. |
+| `depth` | number | `0`–`3`. Must be the parent's depth plus one. |
+| `score` | number | Always `upvotedBy.size() - downvotedBy.size()`. |
+| `upvotedBy` | array of strings | UIDs that upvoted. |
+| `downvotedBy` | array of strings | UIDs that downvoted. |
+| `createdAt` | timestamp | Server timestamp. |
+| `isAnonymous` | boolean | `true` for a Ghost Mode comment. |
+| `anonAlias` | string | Alias shown instead of a name. Only present when anonymous. |
+| `reportCount` | number | Anonymous reports on this comment. At 3 the app hides it from normal users. |
+
+Anonymous comments omit `authorId` and `authorName`; the private identity is
+`/ghostIdentities/{commentId}`. The alias is reused from
+`/ghostAliases/{threadId}_{uid}`, so a student keeps one alias per thread.
+
+Rules check that a reply's parent exists in the same thread and is exactly one
+level shallower, so the depth field cannot be faked. Adding a comment writes the
+comment and increments the thread's `commentCount` in one batch.
+
+Deleting a comment with replies is blocked in the repository so replies are not
+orphaned; delete the replies first. Deleting a thread leaves its comments
+unreachable because the read rule requires the thread to exist.
+
+## Ghost Mode records
+
+Ghost Mode keeps the public thread or comment authorless and stores the private
+link in separate documents. The app writes the public item and its private
+records in one Firestore batch. Rules can enforce the shape and access of each
+document, but they cannot read another document written in the same batch, so
+the pairing itself is a client responsibility (see the limitations at the end).
+
+### `/ghostIdentities/{itemId}`
+
+The private link between an anonymous item and its real author. The document ID
+is the thread ID for an anonymous thread and the comment ID for an anonymous
+comment.
+
+| Field | Type | Notes |
+|---|---|---|
+| `uid` | string | Real author's Firebase Auth UID. |
+| `collegeId` | string | Author's college; must match the caller. |
+| `boardId` | string | Board that contains the item. |
+| `threadId` | string | The containing thread; equal to `itemId` for a thread. |
+| `type` | string | `thread` or `comment`. |
+| `createdAt` | timestamp | Server timestamp, written with the public item. |
+
+Readable only by a moderator of `boardId`. The author cannot read their own
+identity document; rules still use it to prove ownership for deletes. The app
+deletes it in the same batch as the public item. If it is missing, only a
+moderator can delete the orphaned public item.
+
+### `/ghostAliases/{threadId}_{uid}`
+
+One alias per student per thread, so anonymous comments in the same thread keep
+the same name.
+
+| Field | Type | Notes |
+|---|---|---|
+| `uid` | string | Must equal the caller. |
+| `threadId` | string | Thread the alias belongs to. |
+| `alias` | string | Random name such as `Quiet Panda 42`, 3–40 characters. |
+| `createdAt` | timestamp | Server timestamp. |
+
+Readable and creatable only by the owner; never updated or deleted by the app.
+The alias is also copied onto each anonymous item because list queries cannot
+join collections.
+
+### `/ghostLimits/{uid}_{yyyyMMdd}`
+
+The daily anonymous allowance: at most five anonymous threads and comments per
+student per UTC day.
+
+| Field | Type | Notes |
+|---|---|---|
+| `uid` | string | Must equal the caller. |
+| `date` | string | UTC date as `yyyyMMdd`. |
+| `count` | number | Starts at 1; each anonymous write adds exactly 1, never above 5. |
+| `updatedAt` | timestamp | Server timestamp. |
+
+Readable only by the owner. Rules allow create with `count == 1` and update
+with `count == old + 1`, capped at 5. The app reads the counter and writes the
+increment in the same batch as the anonymous item.
+
+### `/boards/{boardId}/threads/{threadId}/ghostReports/{reporterUid}`
+
+A report of an anonymous thread or comment. The document ID is the reporter's
+UID, so each student can report an item once.
+
+| Field | Type | Notes |
+|---|---|---|
+| `reporterId` | string | Must equal the caller. |
+| `itemId` | string | Thread ID or comment ID. |
+| `itemType` | string | `thread` or `comment`. |
+| `reason` | string | `spam`, `harassment`, `hate_speech`, `misinformation`, or `other`. |
+| `details` | string | Optional text, up to 500 characters. |
+| `createdAt` | timestamp | Server timestamp. |
+
+The reporter must be in the same college, and the reported item must be
+anonymous. The app also increments the item's `reportCount` by 1 in the same
+batch. At `reportCount >= 3` the item is labelled **Hidden pending review** in
+moderator views and filtered out for everyone else. Reports are write-only from
+the app. A moderator can restore the item (reset `reportCount` to 0) or delete
+it. Restoring keeps the report documents, so the same reporters cannot report it
+again.
+
+### `/revealLogs/{logId}`
+
+An audit record for a moderator revealing an anonymous author. The document ID
+is auto-generated.
+
+| Field | Type | Notes |
+|---|---|---|
+| `moderatorUid` | string | Must equal the caller. |
+| `boardId` | string | Board where the reveal happened. |
+| `itemId` | string | Anonymous thread or comment ID. |
+| `reason` | string | Required, 1–500 characters. |
+| `createdAt` | timestamp | Server timestamp. |
+
+Create-only for a moderator of `boardId`, and only when the matching ghost
+identity exists. Readable only by board moderators; never updated or deleted.
+The app writes the log first and only then reads the identity and profile, so a
+failed audit write reveals nothing.
+
 ## `/blocks/{blockId}`
 
 A one-way block created by a student. Document ID is
@@ -190,8 +385,9 @@ A one-way block created by a student. Document ID is
 | `blockedId` | string | The blocked student. |
 | `createdAt` | timestamp | Server timestamp. |
 
-Blocks are private: only the blocker can read them. The feed, story bar, and post
-detail hide posts and stories from blocked students on the client.
+Blocks are private: only the blocker can read them. The feed, story bar, post
+detail, board thread list, and thread comments hide content from blocked students
+on the client.
 
 ## `/reports/{reportId}`
 
@@ -202,12 +398,16 @@ Firebase console.
 |---|---|---|
 | `reporterId` | string | Must equal the caller. |
 | `reportedUserId` | string | Author of the reported content. |
-| `targetType` | string | `post`, `comment`, `story`, or `user`. |
+| `targetType` | string | `post`, `comment`, `story`, `user`, `thread`, or `board_comment`. |
 | `targetId` | string | Document ID of the reported item (or the UID for a user). |
 | `reason` | string | `spam`, `harassment`, `hate_speech`, `misinformation`, or `other`. |
 | `details` | string | Optional text, up to 500 characters. |
 | `status` | string | Always `open` on create. |
 | `createdAt` | timestamp | Server timestamp. |
+
+Named threads and board comments use `/reports` with `targetType` `thread` or
+`board_comment`. Anonymous items use the separate `/ghostReports` path below so
+the real author is never needed for the write.
 
 ## `/follows/{followId}`
 
@@ -340,6 +540,14 @@ students' device tokens. See `docs/PUSH.md`.
 | `/posts/{postId}` | same college | author, valid author fields | author edit; likes; comment count +1 | author |
 | `/posts/{postId}/comments` | same college | same college, one-level parent | nobody | nobody |
 | `/stories/{storyId}` | same college | author, expiry within 25h | viewers add only themselves to `seenBy` | author |
+| `/boards/{boardId}` | same college | nobody (console only) | nobody | nobody |
+| `/boards/{boardId}/threads` | same college | same college, named or anonymous author fields, score 0, unpinned | own vote; comment count +1; moderator pin; ghost report +1 | author (by `authorId` or ghost identity) or board moderator |
+| `/boards/{boardId}/threads/{threadId}/comments` | same college | same college, depth = parent + 1, max 3, named or anonymous | own vote; ghost report +1 | author (by `authorId` or ghost identity) or board moderator |
+| `/boards/{boardId}/threads/{threadId}/ghostReports` | nobody | same college, anonymous item, one per reporter | nobody | nobody |
+| `/ghostIdentities/{itemId}` | board moderators | same college, identity fields, batch-written | nobody | author or board moderator |
+| `/ghostAliases/{threadId_uid}` | owner only | owner only, ID must match thread and UID | nobody | nobody |
+| `/ghostLimits/{uid_date}` | owner only | owner only, `count` starts at 1 | owner only, +1 and max 5 | nobody |
+| `/revealLogs/{logId}` | board moderators | board moderator, identity must exist, reason required | nobody | nobody |
 | `/blocks/{blockId}` | blocker only | blocker only | nobody | blocker only |
 | `/reports/{reportId}` | nobody | signed-in, status `open` | nobody | nobody |
 | `/follows/{followId}` | edges involving caller | follower only, ID must match | nobody | follower only |
@@ -359,9 +567,14 @@ students' device tokens. See `docs/PUSH.md`.
 | `stories` | `collegeId` asc, `createdAt` desc | Story bar |
 | `stories` | `collegeId` asc, `authorId` asc, `createdAt` asc | Story viewer |
 | `chats` | `members` array-contains, `lastMessageAt` desc | Chat inbox |
+| `boards` | `collegeId` asc, `name` asc | Board list |
+| `threads` | `collegeId` asc, `pinned` desc, `createdAt` desc | Board threads, New sort |
+| `threads` | `collegeId` asc, `score` desc, `createdAt` desc | Board threads, Top sort |
+| `revealLogs` | `boardId` asc, `createdAt` desc | Moderation audit review by board and time |
 
-Comment queries on a subcollection only order by `createdAt`, which Firestore
-indexes automatically. Block lookups filter only on `blockerId`.
+Feed comments and board comments only order by `createdAt`, which Firestore
+indexes automatically. Block lookups filter only on `blockerId`. Ghost reports
+are written one document at a time and are not queried by the app.
 
 ## Future notes
 
@@ -383,3 +596,37 @@ indexes automatically. Block lookups filter only on `blockerId`.
 - Firebase 25.1 deprecated FCM registration tokens in favour of Firebase
   Installation IDs. The app still stores tokens because they remain co-supported
   and are what a console test sender targets; migrating is a follow-up.
+
+## Ghost Mode limitations
+
+Ghost Mode is enforced by Firestore rules and client batches, not by a trusted
+server. The project runs on the Spark plan and does not use Cloud Functions, so
+these gaps are intentional and should be closed before a high-stakes deployment:
+
+- **No server-side pairing.** Rules cannot read documents written in the same
+  batch. The app creates the public item, identity, alias, limit increment, and
+  ghost report together, but rules cannot prove those documents belong together.
+  A modified client can skip or alter the private pieces within what each rule
+  allows.
+- **Daily limit.** Rules allow only +1 and cap the counter at 5, but they cannot
+  prove the increment belongs to a public post, and they only check that `date`
+  is eight characters. A modified client can skip the limit document or choose a
+  different date. The app uses the UTC date so normal clients agree on the day.
+- **Hidden is a client filter.** Rules do not hide items with
+  `reportCount >= 3`; denying those reads would break list queries. The app
+  filters them for normal users and shows **Hidden pending review** to
+  moderators, but a same-college modified client could still fetch a hidden
+  document directly.
+- **Report counter.** A reporter increments `reportCount` by exactly one, but
+  rules cannot verify that the matching `ghostReports` document was written. A
+  modified client can inflate a counter without a report.
+- **Reveal audit.** `/revealLogs` is create-only and reads the identity after the
+  log write, so a failed log fails the reveal. The log records the reason and
+  item, but nothing can prevent a moderator from revealing without a serious
+  report; the audit trail is the accountability mechanism.
+- **No audit UI.** Reveal logs and ghost reports are reviewed in the Firebase
+  console or with a trusted admin tool, not inside the student app.
+- **Alias matching.** The app shows the delete control for your anonymous item by
+  comparing aliases. Rules still enforce real ownership through
+  `/ghostIdentities`; a rare alias collision could show the control without
+  granting permission.

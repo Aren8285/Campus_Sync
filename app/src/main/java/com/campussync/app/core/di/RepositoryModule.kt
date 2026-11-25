@@ -1,6 +1,7 @@
 package com.campussync.app.core.di
 
 import com.campussync.app.data.repository.FirebaseAuthRepository
+import com.campussync.app.data.repository.FirestoreBoardRepository
 import com.campussync.app.data.repository.FirestoreChatRepository
 import com.campussync.app.data.repository.FirestoreCollegeRepository
 import com.campussync.app.data.repository.FirestoreFeedRepository
@@ -8,6 +9,7 @@ import com.campussync.app.data.repository.FirestoreSafetyRepository
 import com.campussync.app.data.repository.FirestoreStoryRepository
 import com.campussync.app.data.repository.FirestoreUserRepository
 import com.campussync.app.domain.repository.AuthRepository
+import com.campussync.app.domain.repository.BoardRepository
 import com.campussync.app.domain.repository.ChatRepository
 import com.campussync.app.domain.repository.CollegeRepository
 import com.campussync.app.domain.repository.FeedRepository
@@ -45,4 +47,7 @@ abstract class RepositoryModule {
 
     @Binds
     abstract fun bindChatRepository(implementation: FirestoreChatRepository): ChatRepository
+
+    @Binds
+    abstract fun bindBoardRepository(implementation: FirestoreBoardRepository): BoardRepository
 }

@@ -1,17 +1,22 @@
 package com.campussync.app.core.navigation
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -21,6 +26,10 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.campussync.app.core.notifications.RegisterForPushNotifications
 import com.campussync.app.core.ui.components.PlaceholderScreen
+import com.campussync.app.feature.boards.BoardThreadsScreen
+import com.campussync.app.feature.boards.BoardsScreen
+import com.campussync.app.feature.boards.CreateThreadScreen
+import com.campussync.app.feature.boards.ThreadDetailScreen
 import com.campussync.app.feature.chat.ChatListScreen
 import com.campussync.app.feature.chat.ChatThreadScreen
 import com.campussync.app.feature.chat.NewChatScreen
@@ -59,27 +68,40 @@ fun MainShell(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
             if (showBottomBar) {
-                NavigationBar {
-                    TopLevelDestination.entries.forEach { destination ->
-                        NavigationBarItem(
-                            selected = currentRoute == destination.route,
-                            onClick = {
-                                navController.navigate(destination.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
+                Column {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    NavigationBar(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        tonalElevation = 0.dp
+                    ) {
+                        TopLevelDestination.entries.forEach { destination ->
+                            NavigationBarItem(
+                                selected = currentRoute == destination.route,
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                                    indicatorColor = Color.Transparent,
+                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                ),
+                                onClick = {
+                                    navController.navigate(destination.route) {
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = true
                                     }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
-                            icon = {
-                                Icon(
-                                    imageVector = destination.icon,
-                                    contentDescription = destination.label
-                                )
-                            },
-                            label = { Text(text = destination.label) }
-                        )
+                                },
+                                icon = {
+                                    Icon(
+                                        imageVector = destination.icon,
+                                        contentDescription = destination.label
+                                    )
+                                },
+                                label = { Text(text = destination.label) }
+                            )
+                        }
                     }
                 }
             }
@@ -105,7 +127,8 @@ fun MainShell(
                     onOpenStories = { uid ->
                         navController.navigate(Routes.storyViewer(uid))
                     },
-                    onOpenChats = { navController.navigate(Routes.Chats) }
+                    onOpenChats = { navController.navigate(Routes.Chats) },
+                    onOpenBoards = { navController.navigate(Routes.Boards) }
                 )
             }
 
@@ -225,6 +248,75 @@ fun MainShell(
                 )
             ) {
                 ChatThreadScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenProfile = { uid ->
+                        navController.navigate(Routes.publicProfile(uid))
+                    }
+                )
+            }
+
+            composable(Routes.Boards) {
+                BoardsScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenBoard = { boardId ->
+                        navController.navigate(Routes.boardThreads(boardId))
+                    }
+                )
+            }
+
+            composable(
+                route = Routes.BoardThreads,
+                arguments = listOf(
+                    navArgument(Routes.BoardIdArg) {
+                        type = NavType.StringType
+                    }
+                )
+            ) { entry ->
+                val boardId = entry.arguments?.getString(Routes.BoardIdArg).orEmpty()
+
+                BoardThreadsScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenThread = { threadId ->
+                        navController.navigate(Routes.threadDetail(boardId, threadId))
+                    },
+                    onNewThread = {
+                        navController.navigate(Routes.createThread(boardId))
+                    }
+                )
+            }
+
+            composable(
+                route = Routes.CreateThread,
+                arguments = listOf(
+                    navArgument(Routes.BoardIdArg) {
+                        type = NavType.StringType
+                    }
+                )
+            ) { entry ->
+                val boardId = entry.arguments?.getString(Routes.BoardIdArg).orEmpty()
+
+                CreateThreadScreen(
+                    onBack = { navController.popBackStack() },
+                    onCreated = { threadId ->
+                        navController.navigate(Routes.threadDetail(boardId, threadId)) {
+                            popUpTo(Routes.CreateThread) { inclusive = true }
+                        }
+                    }
+                )
+            }
+
+            composable(
+                route = Routes.ThreadDetail,
+                arguments = listOf(
+                    navArgument(Routes.BoardIdArg) {
+                        type = NavType.StringType
+                    },
+                    navArgument(Routes.ThreadIdArg) {
+                        type = NavType.StringType
+                    }
+                )
+            ) {
+                ThreadDetailScreen(
                     onBack = { navController.popBackStack() },
                     onOpenProfile = { uid ->
                         navController.navigate(Routes.publicProfile(uid))

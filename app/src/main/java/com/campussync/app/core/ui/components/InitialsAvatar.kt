@@ -19,6 +19,12 @@ fun InitialsAvatar(
     modifier: Modifier = Modifier,
     size: Dp = 72.dp
 ) {
+    val initialsStyle = when {
+        size >= 72.dp -> MaterialTheme.typography.headlineSmall
+        size >= 44.dp -> MaterialTheme.typography.titleMedium
+        else -> MaterialTheme.typography.labelLarge
+    }
+
     Box(
         modifier = modifier
             .size(size)
@@ -28,7 +34,7 @@ fun InitialsAvatar(
     ) {
         Text(
             text = initialsOf(name),
-            style = MaterialTheme.typography.titleLarge,
+            style = initialsStyle,
             color = MaterialTheme.colorScheme.onPrimaryContainer
         )
     }
