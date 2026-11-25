@@ -1,0 +1,28 @@
+*.iml
+.gradle
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+
+# Local SDK path (machine-specific)
+local.properties
+
+# Firebase configuration (per-developer, never commit)
+google-services.json
+
+# Push relay dependencies and credentials
+/tools/push-relay/node_modules/
+service-account*.json
+firebase-service-account*.json
+
+# IDE
+/.idea/
+/.kotlin/

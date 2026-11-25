@@ -1,0 +1,16 @@
+{
+  "name": "campus-sync-push-relay",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Drains /pushQueue and sends FCM notifications for Campus Sync.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "firebase-admin": "^14.0.0"
+  }
+}

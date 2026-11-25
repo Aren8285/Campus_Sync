@@ -1,0 +1,33 @@
+name: Push relay
+
+# Drains /pushQueue every 5 minutes. GitHub cron can be delayed, and short
+# intervals are only free for public repositories (or within the monthly minute
+# allowance). See docs/PUSH.md for hosts that allow a 1-minute interval.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: push-relay
+  cancel-in-progress: false
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install relay dependencies
+        working-directory: tools/push-relay
+        run: npm install --no-audit --no-fund
+
+      - name: Deliver queued notifications
+        working-directory: tools/push-relay
+        run: npm start
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
